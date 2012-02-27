@@ -45,8 +45,13 @@ sub http_transaction {
 	    my ($start_byte, $end_byte) = split('-', $range);
 	    $suffix .= $start_byte . '_' . $end_byte;
 	}
-	elsif($begin) {
+	elsif($begin && $begin ne '') {
 	    $suffix .= $begin;
+	}
+	else {
+	    # When begin and no forward, then video has only one request and no begin time
+	    $suffix .= '0'; # IMP - define suffix
+	    $begin = 'start'; # IMP - define begin
 	}
 	my $fname = BASE_DIR . $uri->query_param('id') . '_' . $suffix . '.flv';
 
@@ -85,7 +90,8 @@ sub http_transaction {
 		else {
 		    $flv_content = $packet->[3];
 		}
-		my $systime_ms = ($packet->[7]) + ($packet->[8]/1000000);
+
+		my $systime_ms = ( ($packet->[7]) + ($packet->[8]/1000000) ) * 1000;
 		if($flv_content && $flv_content ne '') {
 		    if($range) {
 			push @{ $data->{$uri->query_param('id')}{range}{$suffix} }, { time => $systime_ms, key=>$suffix, content=>$flv_content, id=>$uri->query_param('id')};

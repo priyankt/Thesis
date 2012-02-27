@@ -6,7 +6,7 @@ sub new {
 	packet_number => 0,
 	index => 0,
 	data => $data,
-	data_size => 0,
+	total_bytes => 0,
     };
     bless $self, $class;
     return $self;
@@ -16,7 +16,7 @@ sub process_data {
     my ($self, $req_type) = @_;
 
     if($req_type eq 'begin') {
-	# ignore first 13 bytes of signature and zero previos size present in begin
+	# ignore first 13 bytes of signature and zero previous size present in begin
         # and start reading tags
 	$self->get_bytes(13);
     }
@@ -35,8 +35,9 @@ sub process_data {
 	my $sys_time = $self->current_packet_system_time();
 	my $key = $self->get_current_packet_key();
 	my $id = $self->get_youtube_id();
+	my $total_bytes = $self->get_total_bytes();
 
-	print "$sys_time, $tag->{type}, $tag->{timestamp}, $tag->{datasize}, $key, $id\n";
+	print "$sys_time, $tag->{type}, $tag->{timestamp}, $tag->{datasize}, $total_bytes, $key, $id\n";
 	#$self->set_data_size($self->get_data_size()+$tag->{datasize});
 
         # skip previous tag size
@@ -45,14 +46,14 @@ sub process_data {
     }
 }
 
-sub set_data_size {
+sub set_total_bytes {
     my ($self, $value) = @_;
-    $self->{data_size} = $value;
+    $self->{total_bytes} = $value;
 }
 
-sub get_data_size {
+sub get_total_bytes {
     my $self = shift;
-    return $self->{data_size};
+    return $self->{total_bytes};
 }
 
 sub get_youtube_id {
@@ -90,7 +91,9 @@ sub parse_tag_content {
 }
 
 sub get_bytes {
-    my ($self, $num_bytes) = @_;
+    my ($self, $num_bytes_to_read) = @_;
+
+    my $num_bytes = $num_bytes_to_read;
 
     my $content = '';
     while(1) {
@@ -113,6 +116,7 @@ sub get_bytes {
 	    $self->set_index(0);
 	}
     }
+    $self->set_total_bytes($self->get_total_bytes()+$num_bytes_to_read);
 
     return $content;
 }
