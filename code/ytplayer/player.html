@@ -1,0 +1,227 @@
+<!--
+You are free to copy and use this sample in accordance with the terms of the
+Apache license (http://www.apache.org/licenses/LICENSE-2.0.html)
+-->
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8"/>
+    <title>YouTube Custom Player</title>
+    <style type="text/css">
+      #videoDiv { 
+        margin-right: 3px;
+      }
+      #videoInfo {
+        margin-left: 3px;
+      }
+    </style>
+    <script src="http://www.google.com/jsapi" type="text/javascript"></script>
+    <script type="text/javascript">
+      google.load("swfobject", "2.1");
+      google.load("prototype", "1.7.0.0");
+      var data = [];
+      var toserver = 0;
+      var ended = 0;
+    </script>    
+    <script type="text/javascript">
+      /*
+       * Polling the player for information
+       */
+      
+      // Update a particular HTML element with a new value
+      function updateHTML(elmId, value) {
+        document.getElementById(elmId).innerHTML = value;
+      }
+      
+      // This function is called when an error is thrown by the player
+      function onPlayerError(errorCode) {
+        alert("An error occured of type:" + errorCode);
+      }
+
+      function getStatusString(newState) {
+        var status = "";
+        if(newState == -1) {
+          status = "unstarted";
+        }       
+        if(newState == 0) { 
+          status = "ended";
+        }       
+        if(newState == 1) { 
+          status = "playing";
+	  insertPlayingRecord();
+        }       
+        if(newState == 2) { 
+          status = "paused";
+        }       
+        if(newState == 3) { 
+          status = "buffering";
+        }       
+        if(newState == 5) { 
+          status = "cued"; 
+        }
+	return status;       
+      }
+      
+	function insertPlayingRecord() {
+
+		var row = [];
+                row.push("sta"); // periodic event
+                var currentTime = new Date();
+                row.push(currentTime.getTime());
+                row.push(ytplayer.getCurrentTime() * 1000); // convert to millisec
+                row.push(-1);
+                row.push(-1);
+                row.push(ytplayer.getVideoBytesLoaded());
+                row.push(getStatusString(ytplayer.getPlayerState()));
+                row.push(ytplayer.getPlaybackQuality());
+                row.push(ytplayer.getVideoBytesTotal());
+                row.push(ytplayer.getDuration());
+                row.push(ytplayer.getVideoStartBytes());
+
+                // extract youtube video id from youtube url
+                var yturl = ytplayer.getVideoUrl();
+                var result = yturl.match(/.*?v=(.*)&.*/);
+                row.push(result[1]);
+		sendDataToServer(row);
+	}
+
+      // This function is called when the player changes state
+      function onPlayerStateChange(newState) {
+        //updateHTML("playerState", newState);
+        updateHTML("playerState", getStatusString(newState));
+      }
+
+	function sendDataToServer(data) {
+		var url = "http://www-und.ida.liu.se/~priti063/store_data.php";
+		new Ajax.Request(url, {method:'post',parameters:'data='+JSON.stringify(data),onSuccess:function(req){}}); 
+	}
+      
+      // Display information about the current state of the player
+      function updatePlayerInfo() {
+        // Also check that at least one function exists since when IE unloads the
+        // page, it will destroy the SWF before clearing the interval.
+        if(ytplayer && ytplayer.getDuration) {
+	    var status = ytplayer.getPlayerState();
+            // Send data to server only when video is not in unstarted or ended state
+
+	    var row = [];
+	    if(status > 0) {
+		row.push("pe"); // periodic event
+		var currentTime = new Date();
+		row.push(currentTime.getTime());
+		row.push(ytplayer.getCurrentTime() * 1000); // convert to millisec
+		row.push(-1);
+		row.push(-1);
+		row.push(ytplayer.getVideoBytesLoaded());
+		row.push(getStatusString(ytplayer.getPlayerState()));
+		row.push(ytplayer.getPlaybackQuality());
+		row.push(ytplayer.getVideoBytesTotal());
+		row.push(ytplayer.getDuration());
+		row.push(ytplayer.getVideoStartBytes());
+
+		// extract youtube video id from youtube url
+		var yturl = ytplayer.getVideoUrl();
+		var result = yturl.match(/.*?v=(.*)&.*/);
+		row.push(result[1]);
+
+		data.push(row);
+		if(toserver && !ended) {
+			sendDataToServer(data);
+			toserver = 0;
+			data.length = 0;
+		}
+          }
+	  else if( status == 0 && data.length > 0) { // if video ended then send remaining records in "data" variable
+		sendDataToServer(data);
+		data.length = 0;
+	  }
+
+          updateHTML("videoDuration", ytplayer.getDuration());
+          updateHTML("videoCurrentTime", ytplayer.getCurrentTime());
+          updateHTML("bytesTotal", ytplayer.getVideoBytesTotal());
+          updateHTML("startBytes", ytplayer.getVideoStartBytes());
+          updateHTML("bytesLoaded", ytplayer.getVideoBytesLoaded());
+	  updateHTML("playbackQuality", ytplayer.getPlaybackQuality());
+	  var currentTime = new Date();
+	  updateHTML("systemTime", currentTime.getHours() + ':' + currentTime.getMinutes() + ':' + currentTime.getSeconds() + ':' + currentTime.getMilliseconds());
+        }
+      }
+      
+	function sendToServer() {
+		toserver = 1;
+	}
+
+        function loadVideo() {
+               ytplayer.loadVideoById(document.getElementById("yt_id").value);
+        }
+
+        function downloadData() {
+		var yturl = ytplayer.getVideoUrl();
+	       var result = yturl.match(/.*?v=(.*)&.*/);
+               var filename = result[1] + "_player.log";
+               var url = "http://www-und.ida.liu.se/~priti063/download_data.php?filename=" + filename;
+               window.open(url);
+        }
+
+	function clearData() {
+		var url = "http://www-und.ida.liu.se/~priti063/clear_data.php";
+		new Ajax.Request(url, {onSuccess:function(req){ alert("Table truncated")}}); 
+	}
+
+
+      // This function is automatically called by the player once it loads
+      function onYouTubePlayerReady(playerId) {
+        ytplayer = document.getElementById("ytPlayer");
+        // This causes the updatePlayerInfo function to be called every 100ms to
+        // get fresh data from the player
+        setInterval(updatePlayerInfo, 100);
+	setInterval(sendToServer, 10000); // send collected data back to server every 10 seconds
+        updatePlayerInfo();
+        ytplayer.addEventListener("onStateChange", "onPlayerStateChange");
+        ytplayer.addEventListener("onError", "onPlayerError");
+      }
+      
+      // The "main method" of this sample. Called when someone clicks "Run".
+      function loadPlayer() {
+        // The video to load
+        var videoID = "-UCi0xyB2NQ"
+        // Lets Flash from another domain call JavaScript
+        var params = { allowScriptAccess: "always" };
+        // The element id of the Flash embed
+        var atts = { id: "ytPlayer" };
+        // All of the magic handled by SWFObject (http://code.google.com/p/swfobject/)
+        swfobject.embedSWF("http://www.youtube.com/v/" + videoID + 
+                           "?version=3&enablejsapi=1&playerapiid=player1", 
+                           "videoDiv", "640", "480", "9", null, null, params, atts);
+      }
+
+      function _run() {
+        loadPlayer();
+      }
+      google.setOnLoadCallback(_run);
+    </script>
+  </head>
+  <body style="font-family: Arial;border: 0 none;">
+    <table>
+    <tr>
+    <td><div id="videoDiv">Loading...</div></td>
+    <td valign="top">
+      <div id="videoInfo">
+        <p>Current state of player: <span id="playerState">--</span></p>
+        <p>Current Playback Time: <span id="videoCurrentTime">--:--</span></p> 
+	<p>Total duration of video: <span id="videoDuration">--:--</span></p>
+        <p>Total size in Bytes of video: <span id="bytesTotal">--</span></p>
+	<p>Video started loading from bytes: <span id="startBytes">--</span></p>
+	<p>Total bytes Loaded till now: <span id="bytesLoaded">--</span></p>
+        <p>Playback Quality: <span id="playbackQuality">--:--</span></p>
+        <p>System Time: <span id="systemTime">--:--</span></p>
+	<p><input type="text" id="yt_id" value="Enter youtube id here" /></p>
+	<p><input type="button" value="load" onclick="loadVideo()" /></p>
+	<p><input type="button" value="Download Data" onclick="downloadData()" /></p>
+	<p><input type="button" value="Clear Data" onclick="clearData()" /></p>
+      </div>
+    </td></tr>
+    </table>
+  </body>
+</html>
