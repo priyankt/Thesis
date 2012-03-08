@@ -6,7 +6,12 @@ use URI::QueryParam;
 use Data::Dumper;
 use PacketData;
 
-use constant BASE_DIR => '/home/priyank/Thesis/code/flv/';
+use constant VIDEO_BASE_DIR => '/home/priyank/Thesis/code/flv/';
+use constant LOG_BASE_DIR => '/home/priyank/Thesis/code/log/';
+
+my $options = {
+    generate_log_file => 1,
+};
 
 my $total_data = 0;
 my $done = {};
@@ -51,12 +56,22 @@ sub http_transaction {
 	else {
 	    # When begin and no forward, then video has only one request and no begin time
 	    $suffix .= '0'; # IMP - define suffix
-	    $begin = 'start'; # IMP - define begin
+	    $begin = 'start'; # IMP - define begin with some value, 0 works as false :-(
 	}
-	my $fname = BASE_DIR . $uri->query_param('id') . '_' . $suffix . '.flv';
+
+	# get time when request was sent
+	my $req_time = get_request_time( $args->{req_mono} );
 
         # Save the contents for future reference
-	if(!$done->{$fname}) {
+	if(!$done->{$req_time}) {
+
+	    ############ Qucik Fix for same video downloaded multiple times ###############
+	    if($suffix eq '0') {
+		$suffix .= "_$id";
+		$id++;
+	    }
+	    ####################################################
+	    my $fname = VIDEO_BASE_DIR . $uri->query_param('id') . '_' . $suffix . '.flv';
 
 	    #open(FH, '>', $fname) or die "unable to open file for writing - $fname\n";
 	    print STDERR "Dumping ".length($http_resp->content)." bytes to ".$fname." be patient...\n";
@@ -101,7 +116,7 @@ sub http_transaction {
 		    }
 		}
 	    }
-	    $done->{$fname} = 1;
+	    $done->{$req_time} = 1;
 	}
     }
 }
@@ -129,7 +144,10 @@ END {
 	    }
 	    else {
 		foreach my $start_time (keys %{$data->{$youtube_id}{$req_type}}) {
-		    my $pd = new PacketData($data->{$youtube_id}{$req_type}{$start_time});
+		    if($options->{generate_log_file}) {
+			$options->{log_filename} = LOG_BASE_DIR . "$youtube_id" . '_' . "$req_type" . '_' . "$start_time" . '.log';
+		    }
+		    my $pd = new PacketData($data->{$youtube_id}{$req_type}{$start_time}, $options);
 		    eval {
 			$pd->process_data($req_type); # process each begin request
 		    };
@@ -142,6 +160,14 @@ END {
 	    }
 	}
     }
+}
+
+
+sub get_request_time {
+    my $req_mono = shift;
+    my $packet = $req_mono->first_packet();
+    my $systime_ms = ( ($packet->[7]) + ($packet->[8]/1000000) ) * 1000;
+    return $systime_ms;
 }
 
 sub merge_ranges {

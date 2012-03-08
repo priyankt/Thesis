@@ -1,13 +1,19 @@
 package PacketData;
 
 sub new {
-    my ($class, $data) = @_;
+    my ($class, $data, $opt) = @_;
+
     my $self = {
 	packet_number => 0,
 	index => 0,
 	data => $data,
 	total_bytes => 0,
     };
+
+    while( my ($k, $v) = each(%$opt) ) {
+	$self->{$k} = $v;
+    }
+
     bless $self, $class;
     return $self;
 }
@@ -20,7 +26,10 @@ sub process_data {
         # and start reading tags
 	$self->get_bytes(13);
     }
-    
+    my $fh;
+    if( $self->generate_log_file() ) {
+	open $fh, '>', $self->log_filename() or die "Unable to create log file " . $self->log_filename();
+    }
     while(1) {
 
 	my $tag_content = $self->get_bytes(11);
@@ -37,13 +46,37 @@ sub process_data {
 	my $id = $self->get_youtube_id();
 	my $total_bytes = $self->get_total_bytes();
 
-	print "$sys_time, $tag->{type}, $tag->{timestamp}, $tag->{datasize}, $total_bytes, $key, $id\n";
+	if( $self->debug() ) {
+	    print STDERR "$sys_time, $tag->{type}, $tag->{timestamp}, $tag->{datasize}, $total_bytes, $key, $id\n";
+	}
+	if( $self->generate_log_file() ) {
+	    print $fh "$sys_time,$tag->{type},$tag->{timestamp},$tag->{datasize},$total_bytes,$key,$id\n";
+	}
 	#$self->set_data_size($self->get_data_size()+$tag->{datasize});
 
         # skip previous tag size
 	my $prev_size = $self->get_bytes(4);
 	last if($prev_size eq '');
     }
+    if($self->generate_log_file()) {
+	close($fh);
+    }
+}
+
+
+sub debug {
+    my $self = shift;
+    return $self->{debug};
+}
+
+sub generate_log_file {
+    my $self = shift;
+    return $self->{generate_log_file};
+}
+
+sub log_filename {
+    my $self = shift;
+    return $self->{log_filename};
 }
 
 sub set_total_bytes {
