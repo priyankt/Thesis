@@ -5,12 +5,15 @@ use base qw(Net::Analysis::Listener::HTTP);
 use URI::QueryParam;
 use Data::Dumper;
 use PacketData;
+use DateTime;
 
 use constant VIDEO_BASE_DIR => '/home/priyank/Thesis/code/flv/';
 use constant LOG_BASE_DIR => '/home/priyank/Thesis/code/log/';
 
+
 my $options = {
     generate_log_file => 1,
+    save_flv_file => 1,
 };
 
 my $total_data = 0;
@@ -73,10 +76,12 @@ sub http_transaction {
 	    ####################################################
 	    my $fname = VIDEO_BASE_DIR . $uri->query_param('id') . '_' . $suffix . '.flv';
 
-	    #open(FH, '>', $fname) or die "unable to open file for writing - $fname\n";
 	    print STDERR "Dumping ".length($http_resp->content)." bytes to ".$fname." be patient...\n";
-	    #print FH $http_resp->content;
-	    #close(FH);
+	    if( $options->{save_flv_file} ) {
+		open(FH, '>', $fname) or die "unable to open file for writing - $fname\n";
+		print FH $http_resp->content;
+		close(FH);
+	    }
 
 	    # $data_length is including response header
 	    my $data_length = $resp_mono->length();
@@ -123,6 +128,13 @@ sub http_transaction {
 
 END {
 
+    # Put all the files in todays date folder
+    my $dt = DateTime->today->ymd;
+    my $LOG_DIR = LOG_BASE_DIR . "$dt/";
+    if(! -d $LOG_DIR) {
+	mkdir $LOG_DIR or die "Unable to create directory $LOG_DIR";
+    }
+
     # Do for each youtibe id video found in pcap file
     foreach my $youtube_id (keys %$data) {
         # loop on both begin and range request types
@@ -137,7 +149,7 @@ END {
 		    };
 		    if($@) {
 			if($@ =~ /^Max\spacket\snumber\sreached/) {
-				print STDERR "Max packet number reached. Going for next..\n";
+				print STDERR "Max packet number reached. Going for next request..\n";
 			}    
 		    }
 		}
@@ -145,7 +157,8 @@ END {
 	    else {
 		foreach my $start_time (keys %{$data->{$youtube_id}{$req_type}}) {
 		    if($options->{generate_log_file}) {
-			$options->{log_filename} = LOG_BASE_DIR . "$youtube_id" . '_' . "$req_type" . '_' . "$start_time" . '.log';
+			$options->{log_filename} = $LOG_DIR . "$youtube_id".'.log';
+			print STDERR $options->{log_filename}, "\n";
 		    }
 		    my $pd = new PacketData($data->{$youtube_id}{$req_type}{$start_time}, $options);
 		    eval {
@@ -153,7 +166,7 @@ END {
 		    };
 		    if($@) {
 			if($@ =~ /^Max\spacket\snumber\sreached/) {
-			    print STDERR "Max packet number reached. Going for next..\n";
+			    print STDERR "Max packet number reached. Going for next request..\n";
 			}
 		    }
 		}
