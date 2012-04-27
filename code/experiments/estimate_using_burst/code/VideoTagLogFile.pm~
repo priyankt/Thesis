@@ -1,0 +1,41 @@
+package VideoTagLogFile;
+
+# Given a video tag log file, returns an object representing the log file
+# You can query log file object to get mappins
+
+use strict;
+use warnings;
+
+sub new {
+    my ($class, $logfile) = @_;
+    if(!$logfile || $logfile eq '') {
+	die "Invalid log file supplied.";
+    }
+    my $self = {
+	interpolate => 0,
+    };
+    open FH, $logfile or die "Unable to open $logfile - $!";
+    while(<FH>) {
+	chomp $_;
+	my @records = split(',', $_);
+	push @{$self->{records}}, \@records;
+    }
+    close(FH);
+
+    bless $self, $class;
+    return $self;
+}
+
+sub getTime {
+    my ($self, $bytes) = @_;
+    my $time = 0;
+    foreach my $rec ( @{$self->{records}} ) {
+	if ( $rec->[4] > $bytes ) {
+	    last;
+	}
+	$time = $rec->[2];
+    }
+    return $time;
+}
+
+1;

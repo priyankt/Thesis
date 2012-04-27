@@ -1,0 +1,42 @@
+package Log;
+
+use strict;
+use warnings;
+
+sub new {
+    my ($class, $startTime) = @_;
+    my $self = {
+	_prev_log_time => $startTime,
+	_log_interval => 0,
+    };
+    bless $self, $class;
+    return $self;
+}
+
+# Log interval in seconds
+sub setLogInterval {
+    my ($self, $interval) = @_;
+    $self->{_log_interval} = $interval;
+}
+
+sub getLogInterval {
+    my ($self) = @_;
+    return $self->{_log_interval};
+}
+
+sub isLogTime {
+    my ($self, $currTime) = @_;
+    return ($currTime - $self->getPrevLogTime()) > $self->getLogInterval();
+}
+
+sub setPrevLogTime {
+    my ($self, $logTime) = @_;
+    $self->{_prev_log_time} = $logTime;
+}
+
+sub getPrevLogTime {
+    my ($self) = @_;
+    return $self->{_prev_log_time};
+}
+
+1;

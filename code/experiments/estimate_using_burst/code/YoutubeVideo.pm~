@@ -1,0 +1,23 @@
+package YoutubeVideo;
+
+use strict;
+use warnings;
+
+sub new {
+    my $class = shift;
+    my $self = {
+	_video_id => 0,
+	_bit_rate => 0,
+    };
+    bless $self, $class;
+    return $self;
+}
+
+sub setVideoId {
+    my ($self, $id) = @_;
+    $self->{_video_id} = $id;
+}
+
+sub 
+
+1;

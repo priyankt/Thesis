@@ -1,0 +1,378 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Net::Pcap;
+use NetPacket::Ethernet;
+use NetPacket::IP;
+use NetPacket::TCP;
+use Time::HiRes qw/gettimeofday/;
+use Chart::Gnuplot;
+use Getopt::Long;
+
+use Data::Dumper;
+
+#use constant INTERVAL => 10;
+use constant ALPHA => 0.30;
+use constant D_ALPHA => 0.30;
+#use constant MIN_VARIATION => 50;
+#use constant MIN_TIME => 5;
+use constant SAMPLE_SIZE => 7;
+use constant DUMP_BASE => '../pcap/';
+use constant LOG_INTERVAL => 1; # log values every 5 seconds
+use constant MAX_SLOPE => 150;
+use constant FACTOR => 40;
+
+my $offline = 0;
+my $filename = '';
+my $dev;
+my $snaplen = 15000;
+my $dumpfile;
+my $debug = 0;
+
+GetOptions(
+    "offline" => \$offline,
+    "file=s" => \$filename,
+    "device=s" => \$dev,
+    "snaplen=s" => \$snaplen,
+    "dump=s" => \$dumpfile,
+    "debug" => \$debug,
+    );
+
+if($offline && ( !$filename || $filename eq '' ) ) {
+    print STDERR "Please input filename for offline mode.\n";
+    exit;
+}
+
+if($dumpfile) {
+    $dumpfile = DUMP_BASE . $dumpfile;
+}
+my $err;
+my $key;
+my $total_bytes = 0;
+
+my $arr = 0;
+my $arrvar = 0;
+my $prev_x = 0;
+my $prev_y = 0;
+my $threshold = 0;
+my $knee_detected = 0;
+my $start_time = 0;
+
+my $fh;
+my $counter = 0;
+my $knee_counter = 0;
+my $data = {};
+my $knee = {};
+
+my $knee_x = 0;
+my $knee_y = 0;
+my $total_data_rate_est = 0;
+my $cnt = 0;
+my $video_id = '';
+
+#   Use network device passed in program arguments or if no 
+#   argument is passed, determine an appropriate network 
+#   device for packet sniffing using the 
+#   Net::Pcap::lookupdev method
+
+my ($address, $netmask);
+if(!$offline) {
+    unless (defined $dev) {
+	$dev = Net::Pcap::lookupdev(\$err);
+	if (defined $err) {
+	    die 'Unable to determine network device for monitoring - ', $err;
+	}
+    }
+
+    #   Look up network address information about network 
+    #   device using Net::Pcap::lookupnet - This also acts as a 
+    #   check on bogus network device arguments that may be 
+    #   passed to the program as an argument
+
+    if (Net::Pcap::lookupnet($dev, \$address, \$netmask, \$err)) {
+	die 'Unable to look up device information for ', $dev, ' - ', $err;
+    }
+}
+
+#   Create packet capture object on device
+
+my $object;
+
+if(!$offline) {
+    $object = Net::Pcap::open_live($dev, $snaplen, 0, 0, \$err);
+}
+else {
+    $object = Net::Pcap::open_offline($filename, \$err);
+}
+unless (defined $object) {
+    die 'Unable to create packet capture ', $err;
+}
+
+my $dumper;
+if($dumpfile) {
+    $dumper = Net::Pcap::pcap_dump_open($object, $dumpfile);
+}
+
+#   Compile and set packet filter for packet capture 
+#   object - For the capture of TCP packets with the SYN 
+#   header flag set directed at the external interface of 
+#   the local host, the packet filter of '(dst IP) && (tcp
+#   [13] & 2 != 0)' is used where IP is the IP address of 
+#   the external interface of the machine.  For 
+#   illustrative purposes, the IP address of 127.0.0.1 is 
+#   used in this example.
+
+my $filter;
+Net::Pcap::compile(
+    $object, 
+    \$filter, 
+    'port 80', 
+    1, 
+    $netmask
+) && die 'Unable to compile packet capture filter';
+Net::Pcap::setfilter($object, $filter) &&
+    die 'Unable to set packet capture filter';
+
+#   Set callback function and initiate packet capture loop
+
+Net::Pcap::loop($object, -1, \&syn_packets, '') ||
+    die 'Unable to perform packet capture';
+
+if($dumpfile) {
+    Net::Pcap::pcap_dump_close($dumper);
+}
+Net::Pcap::close($object);
+
+sub syn_packets {
+    my ($user_data, $header, $packet) = @_;
+
+    # write dump data to dump file
+    if($dumpfile) {
+	Net::Pcap::pcap_dump($dumper, $header, $packet);
+    }
+
+    #   Strip ethernet encapsulation of captured packet 
+
+    my $ether_data = NetPacket::Ethernet::strip($packet);
+
+    #   Decode contents of TCP/IP packet contained within 
+    #   captured ethernet packet
+
+    my $ip = NetPacket::IP->decode($ether_data);
+    my $tcp = NetPacket::TCP->decode($ip->{'data'});
+
+    #   Print all out where its coming from and where its 
+    #   going to!
+
+    #print
+    #    $ip->{'src_ip'}, ":", $tcp->{'src_port'}, " -> ",
+    #    $ip->{'dest_ip'}, ":", $tcp->{'dest_port'}, "\n";
+
+    my $curr_key = $ip->{'src_ip'} . '-' . $tcp->{'src_port'} . '-' . $ip->{'dest_ip'} . '-' . $tcp->{'dest_port'};
+    my ($seconds, $fraction) = gettimeofday();
+
+    # UGLY UGLY FIX with Content-Length: 1781760. In case of range request, it is not possible to distinguish it with
+    # other request without this method for now.
+    #if( $tcp->{data} =~ /content-type: video\/x-flv/i && $tcp->{data} !~ /Content-Length: 1781760/i && $tcp->{data} !~ /Content-Length: 0/i) {
+    if( $tcp->{data} =~ /content-type: video\/x-flv/i && $tcp->{data} !~ /Content-Length: 1781760/i && $tcp->{data} !~ /Content-Length: 0/i) {
+
+	    print STDERR "Found flv\n";
+
+	    $key = $curr_key;
+	    #$key = $ip->{'src_ip'} . '-' . $tcp->{'src_port'} . '-' . $ip->{'dest_ip'} . '-' . $tcp->{'dest_port'};
+	    print STDERR "Key set to $key\n";
+
+	    # initialize global variables
+	    $start_time = sprintf( "%.3f",($header->{tv_sec}*1000) + ($header->{tv_usec}/1000));
+	    $knee_detected = 0;
+	    $total_bytes = 0;
+	    $arr = 0;
+	    $arrvar = 0;
+	    $prev_x = 0;
+	    $prev_y = 0;
+	    $threshold = 0;
+
+	    # initialize cnt variable for each video
+	    $cnt = 0;
+	    $total_data_rate_est = 0;
+	    $knee_x = 0;
+	    $knee_y = 0;
+
+	    $counter++;
+	    if($knee_counter > SAMPLE_SIZE) {
+		plot_data();
+		exit;
+	    }
+	    #my $fname = 'bytes_log/video_' . $counter++ . '_bytes.log';
+	    #if($fh) {
+	#	close($fh);
+	 #   }
+	  #  open($fh, ">", $fname) or die "unable to open $fname - $!";
+    }
+    # This is the case when the data is continuation of previous range request. In that case ignore 
+    # http response header
+    elsif($tcp->{data} =~ /Content-Length: 1781760/i) {
+	return; # pretend as if nothing happened and wait for next packet :)
+    }
+    elsif( $tcp->{data} =~ /GET\s\/videoplayback\?/i ) {
+	#print STDERR "PLAYBACK: $tcp->{data}\n";
+	if ( $tcp->{data} =~ /&?id=([a-zA-Z0-9]{16})&?/ ) {
+	    if($1) {
+		$video_id = $1;
+	    }
+	    else {
+		print STDERR "STRANGE: videoplayback request but no hex id matched\n";
+	    }
+	}
+    }
+    elsif($key && $key eq $curr_key) {
+	#if( $header->{len} == $header->{caplen} ) {
+	 #   my $time_ms = ($header->{tv_sec}*1000) + ($header->{tv_usec}/1000); #convert into milliseconds
+	 #   my $time_diff_ms = sprintf("%.3f", $time_ms - $start_time);
+
+	    #print "SOURCE: Seqnum = ", $tcp->{seqnum}, ", Acknum = ", $tcp->{acknum}, ", Time = ", $time_diff_ms, "\n";
+	    $total_bytes += length($tcp->{data});
+	    if($debug) {
+		#print $fh "$time_diff_ms,$total_bytes\n";
+	    }
+	    #print "$time_diff_ms,$total_bytes\n";
+	    #push @{$data->{$counter}}, [$time_diff_ms,$total_bytes];
+	    #check_knee_point($time_diff_ms, $total_bytes);
+	#}
+	#else {
+	#    print STDERR "STDERR: Entire packet not captured, " . $header->{len} . ', ' . $header->{caplen} . "\n";
+	#}
+    }
+    elsif( $key && $curr_key eq get_ack_key($key) ) {
+	my $time_ms = ($header->{tv_sec}*1000) + ($header->{tv_usec}/1000); #convert into milliseconds
+	my $time_diff_ms = sprintf("%.3f", $time_ms - $start_time);
+	#print "$time_diff_ms,$total_bytes\n";
+	push @{$data->{$counter}}, [$time_diff_ms,$total_bytes];
+	check_knee_point($time_diff_ms, $total_bytes);
+
+	# update prev_time so that next packet time can be calculated
+	$prev_x = $time_diff_ms;
+	$prev_y = $total_bytes;
+
+	#print "DEST: Seqnum = ", $tcp->{seqnum}, ", Acknum = ", $tcp->{acknum}, ", Time = ", $time_diff_ms, "\n";
+    }
+}
+
+sub get_ack_key {
+    my $flow = shift;
+    my @val = split('-', $flow);
+    return "$val[2]-$val[3]-$val[0]-$val[1]";
+}
+
+sub check_knee_point {
+    my ($x, $y) = @_;
+
+    my $curr_arr_time = sprintf("%.3f", $x - $prev_x); # in millisec
+    if( $threshold && $curr_arr_time > $threshold ) {
+	# initialize slope to some large value
+	#my $slope=99999;
+	if($knee_x && $knee_y) {
+	    my $slope = ($prev_y - $knee_y)/($prev_x - $knee_x);
+	    print STDERR "Slope = $slope, $threshold, $x, $y\n";
+	    if($slope < MAX_SLOPE) {
+		if(!$total_data_rate_est) {
+		    $total_data_rate_est = $knee_y/(40 + ($curr_arr_time/1000)); # in Bps
+		    my $data_rate_kbps = ($knee_y*8)/40000; # in kbps
+		    print STDERR "Knee retained at ($knee_x, $knee_y, $data_rate_kbps)\n";
+		}
+	    }
+	    else {
+		$knee_x = $prev_x;
+		$knee_y = $prev_y;
+	    }
+	}
+	else {
+	    $knee_x = $prev_x;
+	    $knee_y = $prev_y;
+	}
+
+=head
+	    if($slope > MAX_SLOPE) {
+		$knee_x = $prev_x;
+		$knee_y = $prev_y;
+	    }
+	    else {
+		if(!$total_data_rate_est) {
+		    $total_data_rate_est = $knee_y/(40 + ($curr_arr_time/1000)); # in Bps
+		    my $data_rate_kbps = ($knee_y*8)/40000; # in kbps
+		    print STDERR "Knee retained at ($knee_x, $knee_y, $data_rate_kbps)\n";
+		}
+	    }
+=cut
+
+	    
+	    #if($total_data_rate_est) {
+		# assuming playback starts immediately after receiving first byte
+	#	my $current_playback_time_est_sec = $time_diff_ms/1000; # playback time in sec
+	#	my $buffered_time_sec = sprintf( "%.2f", ($y/$total_data_rate_est) - $current_playback_time_est_sec);
+	#	my $sys_time = sprintf("%d", $start_time + $time_diff_ms); # system time in millisec since epoch
+	#	printf( "%d,%.2f\n", $sys_time, $buffered_time_sec);
+	 #   }
+    }
+	
+	if( $total_data_rate_est && ( $x > LOG_INTERVAL * 1000 * $cnt) ) {
+	    my $current_playback_time_est_sec = $x/1000; # playback time in sec
+	    my $buffered_time_sec = sprintf( "%.2f", ($y/$total_data_rate_est) - $current_playback_time_est_sec);
+	    my $sys_time = sprintf("%d", $start_time + $x); # system time in millisec since epoch
+	    #printf( "%d,%.2f,%s\n", $sys_time, $buffered_time_sec, $video_id);
+	    $cnt++;
+	}
+
+	# EWMA for arrival of packets/acks
+	$arr = ($arr ? ALPHA * $curr_arr_time + (1 - ALPHA) * $arr : $curr_arr_time);
+	$arr = sprintf("%.3f", $arr);
+	
+	# calculate the deviation from average inter arrival time
+	my $deviation = abs($curr_arr_time - $arr);
+	$deviation = sprintf("%.3f", $deviation);
+	
+	# EWMA for deviation from average arrival
+	$arrvar = ($arrvar ? D_ALPHA * $deviation + (1 - D_ALPHA) * $arrvar : $arr);
+	$arrvar = sprintf("%.3f", $arrvar);
+	
+	# update wait threshold
+	$threshold = $arr + FACTOR * $arrvar;
+	$threshold = sprintf("%.3f", $threshold);
+
+	#print STDERR "$curr_arr_time, $arrvar, $threshold\n";
+    #}
+}
+
+sub plot_data {
+    my $datasets = [];
+    foreach my $id (keys %$knee) {
+	my $dataset = Chart::Gnuplot::DataSet->new(
+	    points => $data->{$id},
+	    style => 'lines',
+	    width => 2,
+	    );
+	push @$datasets, $dataset;
+    }
+    my $label_data = [];
+    foreach my $id (keys %$knee) {
+	push @$label_data, [$knee->{$id}{knee_x}, $knee->{$id}{knee_y}];
+    }
+    my $label_dataset = Chart::Gnuplot::DataSet->new(
+	points => $label_data,
+	style => 'points',
+	title => 'knee',
+	color => 'black',
+	pointtype => 'fill-circle',
+	);
+    push @$datasets, $label_dataset;
+    my $chart = Chart::Gnuplot->new(
+        output => "output.pdf",
+        title  => "Online knee point detection",
+        xlabel => "time relative to first packet (millisec)",
+        ylabel => "bytes buffered",
+	);
+
+    $chart->plot2d(@$datasets);
+}
