@@ -13,7 +13,7 @@ use constant LOG_BASE_DIR => '/home/priyank/Thesis/code/log/';
 
 my $options = {
     generate_log_file => 1,
-    save_flv_file => 1,
+    save_flv_file => 0,
 };
 
 my $total_data = 0;
@@ -43,7 +43,7 @@ sub http_transaction {
     my $content_type = $http_resp->header('content-type');
 
     # Check if content_type is video/x-flv
-    if ($content_type =~ /video\/x-flv/i) {
+    if ($content_type =~ /video\/x-flv/i && $content_length != 0) {
 
         # Extract range or begin parameter present in request url
 	my $range = $uri->query_param('range');
@@ -142,8 +142,12 @@ END {
 	    # so if 12345-26272 and 26273-35647 are two ranges then mearge into 12345-35647 for later processing
 	    if($req_type eq 'range') {
 		my $packet_data = merge_ranges($data->{$youtube_id}{$req_type});
+		if($options->{generate_log_file}) {
+		    $options->{log_filename} = $LOG_DIR . "$youtube_id".'.log';
+		    print $options->{log_filename}, "\n";
+		}
 		foreach (keys %$packet_data) {
-		    my $pd = new PacketData($packet_data->{$_});
+		    my $pd = new PacketData($packet_data->{$_}, $options);
 		    eval {
 			$pd->process_data($req_type);
 		    };
@@ -158,7 +162,7 @@ END {
 		foreach my $start_time (keys %{$data->{$youtube_id}{$req_type}}) {
 		    if($options->{generate_log_file}) {
 			$options->{log_filename} = $LOG_DIR . "$youtube_id".'.log';
-			print STDERR $options->{log_filename}, "\n";
+			print $options->{log_filename}, "\n";
 		    }
 		    my $pd = new PacketData($data->{$youtube_id}{$req_type}{$start_time}, $options);
 		    eval {
